@@ -1,0 +1,145 @@
+---
+title: "Spotify Data Analysis"
+author: "Khoi Trinh"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Analyzing My Spotify Streaming History
+
+All of the codes are adapted from this [article](https://towardsdatascience.com/explore-your-activity-on-spotify-with-r-and-spotifyr-how-to-analyze-and-visualize-your-stream-dee41cb63526)
+
+First, here are the required libraries
+
+```{r library, warning=FALSE, message=FALSE}
+library(jsonlite)
+library(lubridate)
+library(gghighlight)
+library(spotifyr)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(plotly)
+```
+
+Let's read in our data, you can find how to get your own Spotify data [here](https://www.makeuseof.com/tag/download-privacy-data-spotify/)
+
+I have 4 of these history files, but you may have more or less.
+
+```{r read in json}
+streamHistory0 <- data.frame(fromJSON("old-data/StreamingHistory0.json", flatten = TRUE))
+streamHistory1 <- data.frame(fromJSON("old-data/StreamingHistory1.json", flatten = TRUE))
+streamHistory2 <- data.frame(fromJSON("old-data/StreamingHistory2.json", flatten = TRUE))
+streamHistory3 <- data.frame(fromJSON("old-data/StreamingHistory3.json", flatten = TRUE))
+streamHistory4 <- data.frame(fromJSON("old-data/StreamingHistory4.json", flatten = TRUE))
+streamHistory5 <- data.frame(fromJSON("old-data/StreamingHistory5.json", flatten = TRUE))
+
+streamHistory <- Map(c, streamHistory0, streamHistory1, streamHistory2, 
+                     streamHistory3)
+```
+
+On what day did I listen to more or less music?
+
+```{r add date and time}
+# Add date and time
+mySpotify <- streamHistory %>% 
+  as_tibble() %>% 
+  mutate_at("endTime", ymd_hm) %>% 
+  mutate(endTime = endTime - hours(6)) %>% 
+  mutate(date = floor_date(endTime, "day") %>% as_date, 
+         seconds = msPlayed / 1000, minutes = seconds / 60)
+
+# Playback activity per week and hours
+streamingHours <- mySpotify %>% 
+  filter(date >= "2020-09-01") %>% 
+  group_by(date) %>% 
+  group_by(date = floor_date(date, "week")) %>%
+  summarize(hours = sum(minutes) / 60) %>% 
+  arrange(date) %>% 
+  ggplot(aes(x = date, y = hours)) + 
+  geom_col(aes(fill = hours)) +
+  scale_fill_gradient(low = "yellow", high = "red") + 
+  labs(x= "Date", y= "Hours Of Playback") + 
+  ggtitle("Weekly Activity")
+
+streamingHours
+```
+
+So, we know roughly what time of the year I listened to Spotify the most. Let's
+look at the data on a by-week basis.
+
+```{r time of day}
+hoursDay <- mySpotify %>% 
+  filter(date >= "2020-09-01") %>% 
+  group_by(date, hour = hour(endTime), weekday = wday(date, label = TRUE))%>% 
+  summarize(minutesListened = sum(minutes))
+
+hoursDay %>% 
+  group_by(weekday, hour) %>% 
+  summarize(minutes = sum(minutesListened)) %>% 
+  ggplot(aes(x = hour, weekday, fill = minutes)) + 
+  geom_tile() + 
+  scale_fill_gradient(low = "yellow", high = "red") +
+  labs(x= "Time of the day", y= "Day") + 
+  ggtitle("What time of day am I most active?")
+```
+
+How about streaming time by a specific artist? I know I listened to a lot of Bad Omens,
+Bleed From Within, and Polaris.
+
+```{r artist stream, warning=FALSE, message=FALSE}
+hoursArtist <- mySpotify %>% 
+  group_by(artistName, date = floor_date(date, "month")) %>% 
+  summarize(hours = sum(minutes) / 60) %>% 
+  ggplot(aes(x = date, y = hours, group = artistName)) + 
+  labs(x= "Date", y= "Hours of music playback") + 
+  ggtitle("Highlighting Specific Artists") +
+  geom_line() + 
+  gghighlight(artistName == "Bad Omens" || artistName == "Bleed From Within" 
+              || artistName == "Polaris")
+
+hoursArtist
+```
+
+Next, let's get my most listened to artist(s) in 2022 where I've listened to more than 1200 minutes.
+
+```{r most listened to artsits}
+topArtists <- mySpotify %>% 
+  filter(date >= "2020-09-01") %>% 
+  group_by(artistName) %>% 
+  summarize(minutesListened = sum(minutes)) %>% 
+  filter(minutesListened >= 1200)
+
+arrange(topArtists, desc(minutesListened))
+
+topArtists %>%
+  ggplot(aes(x = artistName, y = minutesListened)) + 
+  geom_col(aes(fill = minutesListened)) +
+  scale_fill_gradient(low = "yellow", high = "red") + 
+  labs(x= "Artist", y= "Minutes of music playback") + 
+  ggtitle("My Most Listened To Artists", "> 20 hours listened") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+Finally, let's get my most listened to song(s) in 2022, again, with more than 600 minutes.
+
+```{r most listened to songs}
+topSongs <- mySpotify %>% 
+  filter(date >= "2020-01-01") %>% 
+  group_by(trackName) %>% 
+  summarize(minutesListened = sum(minutes)) %>% 
+  filter(minutesListened >= 600)
+
+arrange(topSongs, desc(minutesListened))
+
+topSongs %>%
+  ggplot(aes(x = trackName, y = minutesListened)) + 
+  geom_col(aes(fill = minutesListened)) +
+  scale_fill_gradient(low = "yellow", high = "red") + 
+  labs(x= "Songs", y= "Minutes of music playback") + 
+  ggtitle("My Most Listened To Songs", "> 10 hours listened") +
+  theme(axis.text.x = element_text(angle = 90))
+```
